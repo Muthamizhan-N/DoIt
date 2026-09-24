@@ -1,0 +1,38 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--  ─── NOTIFICATION PERMISSIONS ───  -->
+    <!--  Required for Android 13+ (API 33+) to show notifications  -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!--  Required for exact alarm scheduling (Android 12+ / API 31+)  -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!--  Fallback: allows inexact alarms when exact alarm permission is denied  -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <!--  Allows notification to fire after device reboot  -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!--  Keeps CPU awake when firing notification in Doze mode  -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!--  Required for vibration on notification  -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <application android:label="DoIt" android:name="${applicationName}" android:icon="@mipmap/ic_launcher">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:taskAffinity="" android:theme="@style/LaunchTheme" android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode" android:hardwareAccelerated="true" android:windowSoftInputMode="adjustResize">
+            <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme"/>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!--  ─── REQUIRED: Reschedule notifications after device reboot ───  -->
+        <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
+        <!--  ─── REQUIRED: Fires the exact alarm at scheduled time ───  -->
+        <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" android:exported="false"/>
+        <!--  ─── REQUIRED: Handles notification actions (tap, dismiss) ───  -->
+        <receiver android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver" android:exported="false"/>
+        <meta-data android:name="flutterEmbedding" android:value="2"/>
+    </application>
+</manifest>
