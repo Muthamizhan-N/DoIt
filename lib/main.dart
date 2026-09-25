@@ -1,14 +1,3 @@
-// ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  Notes App v2.0 — Complete UX Redesign + Unified Notes/Checklist      ║
-// ║                                                                         ║
-// ║  KEY CHANGES:                                                           ║
-// ║  • App renamed: TaskMate → Notes                                       ║
-// ║  • Home screen: Simplified with primary actions & stats grid           ║
-// ║  • Notes editor: Unified text/checklist toggle (no confusion)          ║
-// ║  • Progress page: Cleaner layout with daily breakdown chart            ║
-// ║  • Architecture: Preserved ValueNotifier fixes + new patterns          ║
-// ╚══════════════════════════════════════════════════════════════════════════╝
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -78,26 +67,39 @@ Future<void> scheduleNotif({
   required String body,
   required DateTime at,
   GoalType? repeatType,
+  RecurrenceType? recurrenceType,
 }) async {
   try {
-    final GoalType finalRepeat = repeatType ?? GoalType.daily;
+    RecurrenceType finalRecurrence;
+    if (recurrenceType != null) {
+      finalRecurrence = recurrenceType;
+    } else if (repeatType != null) {
+      switch (repeatType) {
+        case GoalType.daily:   finalRecurrence = RecurrenceType.daily; break;
+        case GoalType.weekly:  finalRecurrence = RecurrenceType.weekly; break;
+        case GoalType.monthly: finalRecurrence = RecurrenceType.monthly; break;
+      }
+    } else {
+      finalRecurrence = RecurrenceType.daily;
+    }
+
     DateTime scheduledAt = at;
     final now = DateTime.now();
 
     // If the scheduled time is in the past, advance to the next upcoming occurrence
     if (scheduledAt.isBefore(now)) {
-      switch (finalRepeat) {
-        case GoalType.daily:
+      switch (finalRecurrence) {
+        case RecurrenceType.daily:
           while (scheduledAt.isBefore(now)) {
             scheduledAt = scheduledAt.add(const Duration(days: 1));
           }
           break;
-        case GoalType.weekly:
+        case RecurrenceType.weekly:
           while (scheduledAt.isBefore(now)) {
             scheduledAt = scheduledAt.add(const Duration(days: 7));
           }
           break;
-        case GoalType.monthly:
+        case RecurrenceType.monthly:
           while (scheduledAt.isBefore(now)) {
             var nextMonth = scheduledAt.month + 1;
             var nextYear = scheduledAt.year;
@@ -110,19 +112,25 @@ Future<void> scheduleNotif({
             scheduledAt = DateTime(nextYear, nextMonth, day, scheduledAt.hour, scheduledAt.minute);
           }
           break;
+        case RecurrenceType.none:
+          if (scheduledAt.isBefore(now)) return;
+          break;
       }
     }
 
-    DateTimeComponents matchComponents;
-    switch (finalRepeat) {
-      case GoalType.daily:
+    DateTimeComponents? matchComponents;
+    switch (finalRecurrence) {
+      case RecurrenceType.daily:
         matchComponents = DateTimeComponents.time;
         break;
-      case GoalType.weekly:
+      case RecurrenceType.weekly:
         matchComponents = DateTimeComponents.dayOfWeekAndTime;
         break;
-      case GoalType.monthly:
+      case RecurrenceType.monthly:
         matchComponents = DateTimeComponents.dayOfMonthAndTime;
+        break;
+      case RecurrenceType.none:
+        matchComponents = null;
         break;
     }
 
@@ -214,7 +222,7 @@ Future<void> rescheduleAllNotifications() async {
           title: n.title.isEmpty ? 'Note Reminder' : n.title,
           body: n.type == 'checklist' ? 'Checklist Reminder' : 'Note Reminder',
           at: n.reminderTime!,
-          repeatType: GoalType.daily,
+          recurrenceType: RecurrenceType.none,
         );
       }
     }
@@ -686,6 +694,7 @@ class Note {
   final List<ChecklistItem> checklistItems; // for checklist notes
   final DateTime createdAt;
   final DateTime? reminderTime;
+  final RecurrenceType reminderRepeat;
   final bool     isCompleted;
   final DateTime? completedAt;
 
@@ -697,6 +706,7 @@ class Note {
     this.checklistItems = const [],
     DateTime? createdAt,
     this.reminderTime,
+    this.reminderRepeat = RecurrenceType.none,
     this.isCompleted = false,
     this.completedAt,
   })  : id = id ?? DateTime.now().microsecondsSinceEpoch.toString(),
@@ -708,6 +718,7 @@ class Note {
     String?   type,
     List<ChecklistItem>? checklistItems,
     DateTime? reminderTime,
+    RecurrenceType? reminderRepeat,
     bool      clearReminder = false,
     bool?     isCompleted,
     DateTime? completedAt,
@@ -719,6 +730,7 @@ class Note {
     type:         type  ?? this.type,
     checklistItems: checklistItems ?? this.checklistItems,
     reminderTime: clearReminder ? null : (reminderTime ?? this.reminderTime),
+    reminderRepeat: reminderRepeat ?? this.reminderRepeat,
     isCompleted:  isCompleted ?? this.isCompleted,
     completedAt:  completedAt ?? this.completedAt,
   );
@@ -731,6 +743,7 @@ class Note {
     'checklistItems': checklistItems.map((i) => i.toJson()).toList(),
     'createdAt':    createdAt.toIso8601String(),
     'reminderTime': reminderTime?.toIso8601String(),
+    'reminderRepeat': reminderRepeat.index,
     'isCompleted':  isCompleted,
     'completedAt':  completedAt?.toIso8601String(),
   };
@@ -746,6 +759,7 @@ class Note {
     createdAt:   DateTime.parse(j['createdAt']),
     reminderTime: j['reminderTime'] != null
         ? DateTime.parse(j['reminderTime']) : null,
+    reminderRepeat: RecurrenceType.none,
     isCompleted: j['isCompleted'] ?? false,
     completedAt: j['completedAt'] != null
         ? DateTime.parse(j['completedAt']) : null,
@@ -1426,6 +1440,7 @@ class _HomePageState extends State<HomePage> {
         title: result.title,
         body: notifBody,
         at: result.reminderTime!,
+        recurrenceType: result.reminderRepeat,
       );
     }
 
@@ -1770,70 +1785,94 @@ class _TaskCard extends StatelessWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-          leading: GestureDetector(
-            onTap: onToggle,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 28, height: 28,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: isChecked ? T.accent : Colors.transparent,
-                border: Border.all(
-                    color: isChecked ? T.accent : Colors.grey, width: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            GestureDetector(
+              onTap: onToggle,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 26, height: 26,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isChecked ? T.accent : Colors.transparent,
+                  border: Border.all(
+                      color: isChecked ? T.accent : Colors.grey[400]!, width: 2),
+                ),
+                child: isChecked
+                    ? const Icon(Icons.check_rounded,
+                    color: Colors.white, size: 16)
+                    : null,
               ),
-              child: isChecked
-                  ? const Icon(Icons.check_rounded,
-                  color: Colors.white, size: 16)
-                  : null,
             ),
-          ),
-          title: Text(task.text,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  decoration: (!task.isRecurring && task.done) ? TextDecoration.lineThrough : null,
-                  color: (!task.isRecurring && task.done) ? T.sub : T.text,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 14)),
-          subtitle: Wrap(spacing: 4, runSpacing: 4, children: [
-            if (task.isStopped)
-              _badge('Stopped', T.danger)
-            else
-              _badge('${task.recurrenceType.label}$recurrenceDetails', task.goalType.color),
-            if (task.isRecurring && task.isCompletedToday)
-              _badge('✓ Completed today', T.accent),
-            if (task.reminderTime != null)
-              _badge('⏰ ${fmtTime(task.reminderTime!)}', T.primary),
-          ]),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            _ptBadge(task.points),
-            IconButton(
-              icon: const Icon(Icons.edit_outlined, size: 18, color: T.sub),
-              tooltip: 'Edit',
-              onPressed: onEdit,
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(),
-            ),
-            if (task.isRecurring && !task.isStopped && onStopRecurring != null)
-              IconButton(
-                icon: const Icon(Icons.stop_circle_outlined, size: 18, color: T.sub),
-                tooltip: 'Stop Recurring Task',
-                onPressed: onStopRecurring,
-                padding: const EdgeInsets.all(4),
-                constraints: const BoxConstraints(),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    task.text,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      decoration: (!task.isRecurring && task.done) ? TextDecoration.lineThrough : null,
+                      color: (!task.isRecurring && task.done) ? T.sub : T.text,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _ptBadge(task.points),
+                      if (task.isStopped)
+                        _badge('Stopped', T.danger)
+                      else
+                        _badge('${task.recurrenceType.label}$recurrenceDetails', task.goalType.color),
+                      if (task.isRecurring && task.isCompletedToday)
+                        _badge('✓ Completed today', T.accent),
+                      if (task.reminderTime != null)
+                        _badge('⏰ ${fmtTime(task.reminderTime!)}', T.primary),
+                    ],
+                  ),
+                ],
               ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline_rounded,
-                  size: 18, color: T.danger),
-              tooltip: 'Delete',
-              onPressed: onDelete,
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(),
             ),
-          ]),
+            const SizedBox(width: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined, size: 18, color: T.sub),
+                  tooltip: 'Edit',
+                  onPressed: onEdit,
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                ),
+                if (task.isRecurring && !task.isStopped && onStopRecurring != null)
+                  IconButton(
+                    icon: const Icon(Icons.stop_circle_outlined, size: 18, color: T.sub),
+                    tooltip: 'Stop Recurring Task',
+                    onPressed: onStopRecurring,
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline_rounded,
+                      size: 18, color: T.danger),
+                  tooltip: 'Delete',
+                  onPressed: onDelete,
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -2791,6 +2830,7 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
   late TextEditingController _bodyCtrl;
   late String _noteType;
   late List<ChecklistItem> _checklistItems;
+  late List<TextEditingController> _checklistControllers;
   DateTime? _reminder;
 
   bool get _isEditing => widget.note != null;
@@ -2808,6 +2848,9 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
       title: i.title,
       isComplete: i.isComplete,
     )).toList() ?? [];
+    _checklistControllers = _checklistItems
+        .map((i) => TextEditingController(text: i.title))
+        .toList();
     _reminder = note?.reminderTime;
   }
 
@@ -2815,7 +2858,18 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
   void dispose() {
     _titleCtrl.dispose();
     _bodyCtrl.dispose();
+    for (final ctrl in _checklistControllers) {
+      ctrl.dispose();
+    }
     super.dispose();
+  }
+
+  void _syncChecklistFromControllers() {
+    for (int i = 0; i < _checklistItems.length && i < _checklistControllers.length; i++) {
+      _checklistItems[i] = _checklistItems[i].copyWith(
+        title: _checklistControllers[i].text,
+      );
+    }
   }
 
   /// Switch from text → checklist (split text into items)
@@ -2823,18 +2877,49 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
     final text = _bodyCtrl.text.trim();
     if (text.isNotEmpty) {
       final lines = text.split('\n').where((l) => l.trim().isNotEmpty);
-      _checklistItems = lines.map((line) => ChecklistItem(
-        title: line.trim(),
-        isComplete: false,
-      )).toList();
+      _checklistItems = lines.map((line) {
+        String cleaned = line.trim();
+        bool isComplete = false;
+
+        if (cleaned.startsWith('✓') || cleaned.startsWith('[x]') || cleaned.startsWith('[X]')) {
+          isComplete = true;
+        }
+
+        final regex = RegExp(r'^([\u2022\u2023\u25E6\u2043\u2219\u00B7\-\*✓]|\[[ xX]\])\s*');
+        while (regex.hasMatch(cleaned)) {
+          cleaned = cleaned.replaceFirst(regex, '');
+        }
+
+        return ChecklistItem(
+          title: cleaned.trim(),
+          isComplete: isComplete,
+        );
+      }).toList();
     }
+
+    // Refresh controllers
+    for (final ctrl in _checklistControllers) {
+      ctrl.dispose();
+    }
+    _checklistControllers = _checklistItems
+        .map((i) => TextEditingController(text: i.title))
+        .toList();
+
     setState(() => _noteType = 'checklist');
   }
 
   /// Switch from checklist → text (join items into body)
   void _switchToText() {
+    _syncChecklistFromControllers();
     final content = _checklistItems
-        .map((item) => '${item.isComplete ? '✓' : '•'} ${item.title}')
+        .map((item) {
+          String title = item.title.trim();
+          final regex = RegExp(r'^([\u2022\u2023\u25E6\u2043\u2219\u00B7\-\*✓]|\[[ xX]\])\s*');
+          while (regex.hasMatch(title)) {
+            title = title.replaceFirst(regex, '');
+          }
+          return item.isComplete ? '✓ ${title.trim()}' : title.trim();
+        })
         .join('\n');
     _bodyCtrl.text = content;
     setState(() => _noteType = 'text');
@@ -2869,9 +2954,12 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
       return;
     }
 
-    if (_noteType == 'checklist' && _checklistItems.isEmpty) {
-      showSnack(context, 'Add at least one checklist item', isError: true);
-      return;
+    if (_noteType == 'checklist') {
+      _syncChecklistFromControllers();
+      if (_checklistItems.isEmpty) {
+        showSnack(context, 'Add at least one checklist item', isError: true);
+        return;
+      }
     }
 
     final result = Note(
@@ -2881,6 +2969,7 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
       type: _noteType,
       checklistItems: _noteType == 'checklist' ? _checklistItems : [],
       reminderTime: _reminder,
+      reminderRepeat: RecurrenceType.none,
       createdAt: _isEditing ? widget.note!.createdAt : null,
     );
 
@@ -3015,6 +3104,7 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
                               onTap: () {
                                 setState(() {
                                   _checklistItems.add(ChecklistItem(title: ''));
+                                  _checklistControllers.add(TextEditingController(text: ''));
                                 });
                               },
                               child: Container(
@@ -3075,6 +3165,9 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
   }
 
   Widget _buildChecklistItemTile(int idx, ChecklistItem item) {
+    if (idx >= _checklistControllers.length) {
+      _checklistControllers.add(TextEditingController(text: item.title));
+    }
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -3104,7 +3197,7 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
           const SizedBox(width: 12),
           Expanded(
             child: TextField(
-              controller: TextEditingController(text: item.title),
+              controller: _checklistControllers[idx],
               onChanged: (value) {
                 _checklistItems[idx] = _checklistItems[idx].copyWith(
                   title: value,
@@ -3120,9 +3213,11 @@ class _UnifiedNoteEditorState extends State<UnifiedNoteEditorPage> {
             onTap: () {
               setState(() {
                 _checklistItems.removeAt(idx);
+                final removedCtrl = _checklistControllers.removeAt(idx);
+                removedCtrl.dispose();
               });
             },
-            child: Icon(Icons.close, color: T.danger, size: 18),
+            child: const Icon(Icons.close, color: T.danger, size: 18),
           ),
         ],
       ),
@@ -3198,6 +3293,7 @@ class _NotesState extends State<NotesPage> {
         title: result.title,
         body: notifBody,
         at: result.reminderTime!,
+        recurrenceType: RecurrenceType.none,
       );
     }
 
@@ -3284,11 +3380,44 @@ class _NotesState extends State<NotesPage> {
                         style: const TextStyle(fontSize: 12, color: T.sub),
                       ),
                     ),
-                  const SizedBox(height: 6),
-                  Text(
-                    fmtTimeAgo(note.createdAt),
-                    style: const TextStyle(fontSize: 11, color: T.sub),
-                  ),
+                  if (note.reminderTime != null) ...[
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          fmtTimeAgo(note.createdAt),
+                          style: const TextStyle(fontSize: 11, color: T.sub),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: T.primary.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.alarm_rounded, size: 12, color: T.primary),
+                              const SizedBox(width: 3),
+                              Text(
+                                fmtDT(note.reminderTime!),
+                                style: const TextStyle(fontSize: 10, color: T.primary, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      fmtTimeAgo(note.createdAt),
+                      style: const TextStyle(fontSize: 11, color: T.sub),
+                    ),
+                  ],
                 ],
               ),
               onTap: () => _openEditor(note),
